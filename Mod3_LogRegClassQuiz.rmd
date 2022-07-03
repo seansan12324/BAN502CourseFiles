@@ -1,0 +1,165 @@
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(ROCR)
+library(e1071)
+```
+
+```{r}
+parole <- read_csv("parole.csv")
+parole = parole %>% mutate(male=as_factor(male)) %>%
+  mutate(male = fct_recode(male, "female" = "0", "male" = "1"))
+parole = parole %>% mutate(race=as_factor(race)) %>%
+  mutate(race = fct_recode(race, "nonwhite" = "0", "white" = "1"))
+parole = parole %>% mutate(state=as_factor(state)) %>%
+  mutate(state = fct_recode(state, "kentucky" = "2", "louisiana" = "3", "virginia" = "4", "other" = "1"))
+parole = parole %>% mutate(crime=as_factor(crime)) %>%
+  mutate(crime = fct_recode(crime, "larceny" = "2", "drug" = "3", "driving" = "4", "other" = "4"))
+parole = parole %>% mutate(multiple.offenses=as_factor(multiple.offenses)) %>%
+  mutate(multiple.offenses = fct_recode(multiple.offenses, "multiple" = "1", "single" = "0"))
+parole = parole %>% mutate(violator=as_factor(violator)) %>%
+  mutate(violator = fct_recode(violator, "Yes" = "1", "No" = "0"))
+```
+
+Question 1: 78 parolees ended up violating parole
+
+```{r}
+set.seed(12345)
+parole_split = initial_split(parole, prop = 0.70, strata = violator)
+train = training(parole_split)
+test = testing(parole_split)
+#train = train %>% mutate(violator = fct_relevel(violator, c("No", "Yes")))
+#levels(train$violator)
+```
+
+```{r}
+ggplot(train, aes(x=male, fill=violator)) + geom_bar(position = "fill") + theme_bw()
+```
+Question 3: False
+
+```{r}
+ggplot(train, aes(x=violator, fill=state)) + geom_bar(position = "fill") + theme_bw()
+```
+
+Question 4: True, the violation rate is considerably higher in Louisiana than in other states
+
+```{r}
+ggplot(train, aes(x=violator, y = max.sentence)) + geom_boxplot() + theme_bw()
+ggplot(train, aes(x=max.sentence, fill = violator)) + geom_bar(position = "fill") + theme_bw()
+#ggplot(parole, aes(x=violator, fill=state)) + geom_bar(position = "fill") + theme_bw()
+```
+Question 5: True, the violation rate appears slightly higher among parolees with shorter max sentences
+
+```{r}
+parole_model =
+  logistic_reg() %>%
+  set_engine("glm")
+
+parole_recipe = recipe(violator ~ state, train) %>%
+  step_dummy(all_nominal(), -all_outcomes())
+
+logreg_wf = workflow() %>%
+  add_recipe(parole_recipe) %>%
+  add_model(parole_model)
+
+parole_fit = fit(logreg_wf, train)
+
+summary(parole_fit$fit$fit$fit)
+
+```
+Question 6: Other is the base level in the model summary
+Question 7: The AIC is 278.95
+
+```{r}
+parole_model =
+  logistic_reg(mode = "classification") %>%
+  set_engine("glm")
+
+parole_recipe = recipe(violator ~ state + multiple.offenses + race, train) %>%
+  step_dummy(all_nominal(), -all_outcomes())
+
+logreg_wf = workflow() %>%
+  add_recipe(parole_recipe) %>%
+  add_model(parole_model)
+
+parole_fit = fit(logreg_wf, train)
+
+summary(parole_fit$fit$fit$fit)
+```
+```{r}
+new_data = data.frame(state = "louisiana", multiple.offenses = "multiple", race = "white")
+predict(parole_fit, new_data, type="prob")
+```
+
+Question 8: Multiple offenses, state, and race are significant
+Question 9: The probability that this parolee would violate parole is .40
+
+```{r}
+predictions = predict(parole_fit, train, type = "prob")[2]
+head(predictions)
+```
+
+```{r}
+ROCRpred = prediction(predictions, train$violator)
+
+ROCRperf = performance(ROCRpred, "tpr", "fpr")
+plot(ROCRperf, colorize = TRUE, print.cutoffs.at=seq(0,1,by=0.1), text.adj=c(-0.2,1.7))
+```
+```{r}
+opt.cut = function(perf,pred){
+  cut.ind = mapply(FUN=function(x,y,p){
+    d = (x - 0)^2 + (y-1)^2
+    ind = which(d == min(d))
+    c(sensitivity = y[[ind]], specificity = 1-x[[ind]],
+      cutoff = p[[ind]])
+  }, perf@x.values, perf@y.values, pred@cutoffs)
+}
+print(opt.cut(ROCRperf, ROCRpred))
+```
+
+Question 10: The value of the threshold is .2016
+
+```{r}
+t1 = table(train$violator, predictions > .2015788)
+(t1[1,1]+t1[2,2])/nrow(train)
+t1
+```
+
+Question 11: The model's accuracy is .841
+
+Sensitivity
+```{r}
+36/(18+36)
+```
+Question 12: Sensitivity is .666
+
+Specificity
+```{r}
+374/(374+73)
+```
+
+```{r}
+t2 = table(train$violator, predictions > .2)
+(t2[1,1]+t2[2,2])/nrow(train)
+t2
+```
+```{r}
+t3 = table(train$violator, predictions > .3)
+(t3[1,1]+t3[2,2])/nrow(train)
+t3
+```
+
+```{r}
+t4 = table(train$violator, predictions > .4)
+(t4[1,1]+t4[2,2])/nrow(train)
+t4
+```
+
+```{r}
+t5 = table(train$violator, predictions > .5)
+(t5[1,1]+t5[2,2])/nrow(train)
+t5
+```
+
+Question 13: .5 results in the highest accuracy on the training set
+Question 14: The accuracy is .899
